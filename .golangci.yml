@@ -1,0 +1,81 @@
+version: "2"
+
+run:
+  timeout: 5m
+  relative-path-mode: gomod
+  issues-exit-code: 1
+  tests: true
+  modules-download-mode: readonly
+
+output:
+  formats:
+    text:
+      print-linter-name: true
+      print-issued-lines: true
+      colors: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: true
+
+linters:
+  default: standard
+  enable:
+    - bidichk
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - cyclop
+    - dupl
+    - errname
+    - errorlint
+    - forbidigo
+    - gocritic
+    - gosec
+    - makezero
+    - mirror
+    - nilerr
+    - nilnil
+    - noctx
+    - nolintlint
+    - nosprintfhostport
+    - predeclared
+    - unconvert
+    - unparam
+    - wastedassign
+
+  settings:
+    govet:
+      enable:
+        - shadow
+
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    generated: strict
+    warn-unused: true
+    rules:
+      - path: _test\.go
+        linters:
+          - cyclop
+          - dupl
+          - gosec
+
+formatters:
+  enable:
+    - gofumpt
+    - gci
+  settings:
+    gofumpt:
+      extra-rules: true
+    gci:
+      sections:
+        - Standard
+        - Default
+        - Prefix(github.com/avito-hackaton-team/avito-recap/backend/recap)
+  exclusions:
+    generated: strict
+    warn-unused: true

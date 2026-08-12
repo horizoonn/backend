@@ -1,0 +1,1102 @@
+openapi: 3.0.3
+
+info:
+  title: Avito Recap API
+  version: 1.1.0
+  description: |
+    API MVP «Итоги года» (Avito Recap).
+
+    Сценарий: пользователь выбирает тестовый профиль (`GET /profiles`),
+    запускает генерацию итогов (`POST /recaps`), смотрит слайды (`GET /recaps/{id}`),
+    создаёт постоянную публичную ссылку (`POST /recaps/{id}/share`) и открывает
+    карточку по публичному токену (`GET /shared-recaps/{token}`).
+
+    Соглашения:
+      * внутренние идентификаторы — UUID v4 (строка, формат `uuid`),
+        публичная ссылка использует отдельный непрозрачный токен;
+      * все ошибки возвращаются единым телом `Error` с машиночитаемым `code`;
+      * даты и время — RFC 3339 в UTC;
+      * денежные величины не раскрываются точно: только диапазоны (`AmountRange`);
+      * приватность: личный recap и публичная карточка имеют разный набор полей.
+        В `SharedRecap` не попадают фамилия, причины архетипа, избранное, покупки,
+        продажи, сообщения, суммы и конкретные объявления.
+
+    Генерация детерминирована: одинаковые входные данные профиля и год
+    дают одинаковый recap (те же слайды, тот же архетип).
+
+servers:
+  - url: /api/v1
+    description: Текущий хост
+
+tags:
+  - name: Profiles
+    description: Тестовые профили для демонстрации сценария
+  - name: Recaps
+    description: Генерация, просмотр и шеринг «Итогов года»
+  - name: SharedRecaps
+    description: Публичный просмотр безопасной версии «Итогов года»
+
+paths:
+
+  /profiles:
+    get:
+      tags:
+        - Profiles
+      operationId: listProfiles
+      summary: Получить список тестовых профилей
+      description: |
+        Возвращает набор заранее подготовленных профилей, на которых
+        демонстрируется работа генерации. Список небольшой и постраничности не требует.
+      responses:
+        "200":
+          description: Список профилей
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Profile"
+              example:
+                items:
+                  - id: 018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f01
+                    name: Пётр
+                    surname: Будаев
+                    avatarUrl: https://cdn.example.com/avatars/018f4c1e.png
+                    registeredAt: "2019-03-14T10:12:00Z"
+                    hint: Активный покупатель техники
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /recaps:
+    post:
+      tags:
+        - Recaps
+      operationId: createRecap
+      summary: Сгенерировать «Итоги года» для профиля
+      description: |
+        Считает метрики профиля за год, определяет архетип и собирает слайды.
+        В ответе возвращается только идентификатор — за самими слайдами
+        клиент идёт в `GET /recaps/{id}`.
+
+        Операция идемпотентна по паре (`profileId`, `year`):
+          * если recap ещё не существует — `201 Created`;
+          * если уже существует — `200 OK` с идентификатором ранее сгенерированного recap.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRecapRequest"
+      responses:
+        "200":
+          description: Recap для этого профиля и года уже был сгенерирован ранее
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateRecapResponse"
+        "201":
+          description: Recap сгенерирован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateRecapResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Профиль не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: profile_not_found
+                message: Профиль не найден
+                requestId: 018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f99
+        "409":
+          description: |
+            Недостаточно данных за выбранный год, чтобы собрать осмысленный recap
+            (например, у профиля нет ни одной активности).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: not_enough_activity
+                message: За 2025 год у профиля меньше 5 действий, генерация невозможна
+                requestId: 018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f98
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /recaps/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RecapId"
+    get:
+      tags:
+        - Recaps
+      operationId: getRecap
+      summary: Получить «Итоги года»
+      responses:
+        "200":
+          description: Recap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recap"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /recaps/{id}/share:
+    parameters:
+      - $ref: "#/components/parameters/RecapId"
+    post:
+      tags:
+        - Recaps
+      operationId: shareRecap
+      summary: Создать постоянную публичную ссылку
+      description: |
+        Публикует фиксированную безопасную версию итогов по постоянной ссылке.
+
+        В карточку попадают имя без фамилии, архетип без причин, число активных
+        дней, просмотры, любимая категория и подкатегория, краткое описание
+        интересов и бейджи без числовых описаний. Никогда не попадают избранное,
+        покупки, продажи, сообщения, суммы и конкретные объявления.
+
+        Операция идемпотентна: повторный вызов для того же recap всегда возвращает
+        ту же постоянную ссылку (`200 OK`). Карточка не настраивается клиентом.
+      responses:
+        "200":
+          description: Карточка уже была создана ранее
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedRecapLink"
+        "201":
+          description: Карточка создана
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedRecapLink"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /shared-recaps/{token}:
+    parameters:
+      - $ref: "#/components/parameters/SharedRecapToken"
+    get:
+      tags:
+        - SharedRecaps
+      operationId: getSharedRecap
+      summary: Получить публичную версию «Итогов года»
+      description: |
+        Возвращает фиксированную публичную карточку по токену.
+        Endpoint не раскрывает идентификаторы профиля и исходного recap.
+      responses:
+        "200":
+          description: Публичная карточка
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedRecap"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Публичная ссылка не найдена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: shared_recap_not_found
+                message: Публичная ссылка не найдена
+                requestId: 018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f91
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+
+  parameters:
+
+    RecapId:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор recap
+      schema:
+        $ref: "#/components/schemas/Uuid"
+
+    SharedRecapToken:
+      name: token
+      in: path
+      required: true
+      description: Публичный токен карточки
+      schema:
+        $ref: "#/components/schemas/SharedRecapToken"
+
+  responses:
+
+    BadRequest:
+      description: Некорректный запрос (невалидный path-параметр, битый JSON, неверные типы полей)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: bad_request
+            message: Параметры запроса не прошли валидацию
+            requestId: 018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f95
+
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: recap_not_found
+            message: Recap не найден
+            requestId: 018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f94
+
+    TooManyRequests:
+      description: Слишком много запросов
+      headers:
+        Retry-After:
+          description: Через сколько секунд можно повторить запрос
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            example: 30
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: rate_limited
+            message: Слишком много запросов, попробуйте позже
+            requestId: 018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f93
+
+    InternalError:
+      description: Внутренняя ошибка сервиса
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: internal_error
+            message: Внутренняя ошибка, попробуйте позже
+            requestId: 018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f92
+
+  schemas:
+
+    Uuid:
+      type: string
+      format: uuid
+      example: 018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f01
+
+    SharedRecapToken:
+      type: string
+      description: 128 бит случайности в Base64 URL без padding
+      minLength: 22
+      maxLength: 22
+      pattern: "^[A-Za-z0-9_-]{22}$"
+      example: h8T5P0Bm7rWqLk6uDe2Ftg
+
+    Year:
+      type: integer
+      format: int32
+      minimum: 2015
+      maximum: 2026
+      example: 2025
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        message:
+          type: string
+          description: |
+            Пояснение для разработчика: логи, отладка, Sentry.
+            Не предназначено для показа пользователю — текст в UI фронт
+            подбирает сам по значению `code`.
+          example: Профиль не найден
+        requestId:
+          allOf:
+            - $ref: "#/components/schemas/Uuid"
+          description: Идентификатор запроса для поиска в логах
+
+    ErrorCode:
+      type: string
+      description: |
+        Машиночитаемый код ошибки:
+          * `bad_request` — невалидный JSON, типы, формат идентификатора или
+            значение вне границ схемы (проверяется сгенерированным кодом до хендлера);
+          * `profile_not_found` — профиль не существует;
+          * `recap_not_found` — recap не существует;
+          * `not_enough_activity` — за год недостаточно активности для генерации;
+          * `shared_recap_not_found` — публичная ссылка не существует;
+          * `rate_limited` — превышен лимит запросов;
+          * `internal_error` — необработанная ошибка сервиса.
+      enum:
+        - bad_request
+        - profile_not_found
+        - recap_not_found
+        - not_enough_activity
+        - shared_recap_not_found
+        - rate_limited
+        - internal_error
+
+    Profile:
+      type: object
+      required:
+        - id
+        - name
+        - surname
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+          example: Пётр
+        surname:
+          type: string
+          example: Будаев
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+        registeredAt:
+          type: string
+          format: date-time
+          example: "2019-03-14T10:12:00Z"
+        hint:
+          type: string
+          description: Короткое описание профиля для витрины выбора («что за пользователь»)
+          example: Активный покупатель техники
+
+    RecapStatus:
+      type: string
+      enum:
+        - generating
+        - ready
+        - failed
+      example: ready
+
+    CreateRecapRequest:
+      type: object
+      required:
+        - profileId
+        - year
+      properties:
+        profileId:
+          $ref: "#/components/schemas/Uuid"
+        year:
+          $ref: "#/components/schemas/Year"
+
+    CreateRecapResponse:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+
+    Recap:
+      type: object
+      required:
+        - id
+        - profileId
+        - year
+        - status
+        - archetype
+        - slides
+        - generatedAt
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        profileId:
+          $ref: "#/components/schemas/Uuid"
+        year:
+          $ref: "#/components/schemas/Year"
+        status:
+          $ref: "#/components/schemas/RecapStatus"
+        archetype:
+          $ref: "#/components/schemas/Archetype"
+        slides:
+          type: array
+          description: Слайды в порядке показа
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Slide"
+        generatedAt:
+          type: string
+          format: date-time
+          example: "2026-01-09T08:30:00Z"
+
+    Archetype:
+      type: object
+      description: |
+        Тип поведения пользователя. Считается детерминированно из метрик,
+        поэтому вместе с ним всегда отдаются `reasons` — прозрачное объяснение,
+        почему пользователь получил именно этот архетип.
+      required:
+        - code
+        - title
+        - description
+        - reasons
+      properties:
+        code:
+          type: string
+          enum:
+            - collector
+            - dealmaker
+            - negotiator
+            - explorer
+          example: treasure_hunter
+        title:
+          type: string
+          example: Охотник за находками
+        description:
+          type: string
+          example: Вы просматриваете десятки вариантов, прежде чем выбрать один.
+        reasons:
+          type: array
+          description: Метрики, повлиявшие на выбор архетипа
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ArchetypeReason"
+
+    ArchetypeReason:
+      type: object
+      required:
+        - metric
+        - value
+        - explanation
+      properties:
+        metric:
+          $ref: "#/components/schemas/MetricCode"
+        value:
+          type: string
+          description: |
+            Значение метрики. Строка, а не число: для `favorite_category`
+            и `interests_shift` значение нечисловое.
+          example: "1248"
+        explanation:
+          type: string
+          example: Это в 3 раза больше, чем у среднего пользователя площадки
+
+    MetricCode:
+      type: string
+      description: |
+        Метрики, из которых складывается скоринг архетипа.
+        Список совпадает с константами `entity.Metric` в коде.
+      enum:
+        - active_days
+        - views
+        - favorites
+        - purchases
+        - sales
+        - messages
+        - categories
+        - listings
+
+    Badge:
+      type: object
+      description: Ачивка, выданная по правилам генерации
+      required:
+        - code
+        - title
+      properties:
+        code:
+          type: string
+          example: deals_10
+        title:
+          type: string
+          example: Десять сделок
+        description:
+          type: string
+          example: Вы закрыли 10 сделок за год
+        iconUrl:
+          type: string
+          format: uri
+          nullable: true
+        level:
+          type: string
+          enum:
+            - bronze
+            - silver
+            - gold
+          example: silver
+
+    AmountRange:
+      type: object
+      description: |
+        Денежная величина в виде диапазона — точные суммы намеренно не раскрываются.
+      required:
+        - min
+        - max
+        - currency
+        - label
+      properties:
+        min:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 50000
+        max:
+          type: integer
+          format: int64
+          nullable: true
+          description: "`null` означает открытый верхний край диапазона"
+          example: 100000
+        currency:
+          type: string
+          enum:
+            - RUB
+          example: RUB
+        label:
+          type: string
+          example: 50–100 тыс. ₽
+
+    Cta:
+      type: object
+      description: Следующее действие, которое предлагается пользователю после слайда
+      required:
+        - action
+        - title
+      properties:
+        action:
+          type: string
+          enum:
+            - open_listing
+            - open_category
+            - open_favorites
+            - create_listing
+            - share_recap
+          example: open_listing
+        title:
+          type: string
+          example: Вернуться к объявлению
+        listingId:
+          allOf:
+            - $ref: "#/components/schemas/Uuid"
+          nullable: true
+          description: Заполняется для `open_listing`
+        categoryId:
+          allOf:
+            - $ref: "#/components/schemas/Uuid"
+          nullable: true
+          description: Заполняется для `open_category`
+        url:
+          type: string
+          format: uri-reference
+          nullable: true
+          example: /listings/018f4c1e-0a5f-7b3a-9c11-2b6a5d0e1f10
+
+    ListingRef:
+      type: object
+      required:
+        - id
+        - title
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        title:
+          type: string
+          example: Велосипед Merida Big Nine
+        price:
+          type: integer
+          format: int64
+          nullable: true
+          description: Цена объявления в копейках
+          minimum: 0
+          example: 4200000
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+        categoryId:
+          $ref: "#/components/schemas/Uuid"
+        addedAt:
+          type: string
+          format: date-time
+          description: Когда объявление попало в избранное
+          example: "2025-02-11T19:02:00Z"
+
+    SlideType:
+      x-ogen-name: RecapSlideType
+      type: string
+      enum:
+        - intro
+        - active_days
+        - views
+        - favorites
+        - favorite_category
+        - purchases
+        - sales
+        - messages
+        - interests
+        - archetype
+        - final
+
+    SlideBase:
+      type: object
+      required:
+        - type
+        - title
+      properties:
+        type:
+          $ref: "#/components/schemas/SlideType"
+        title:
+          type: string
+          example: 243 дня на Авито
+        subtitle:
+          type: string
+          example: Вы заходили чаще, чем 8 из 10 пользователей
+        cta:
+          allOf:
+            - $ref: "#/components/schemas/Cta"
+          nullable: true
+
+    Slide:
+      oneOf:
+        - $ref: "#/components/schemas/IntroSlide"
+        - $ref: "#/components/schemas/ActiveDaysSlide"
+        - $ref: "#/components/schemas/ViewsSlide"
+        - $ref: "#/components/schemas/FavoritesSlide"
+        - $ref: "#/components/schemas/CategorySlide"
+        - $ref: "#/components/schemas/PurchasesSlide"
+        - $ref: "#/components/schemas/SalesSlide"
+        - $ref: "#/components/schemas/MessagesSlide"
+        - $ref: "#/components/schemas/InterestsSlide"
+        - $ref: "#/components/schemas/ArchetypeSlide"
+        - $ref: "#/components/schemas/FinalSlide"
+      discriminator:
+        propertyName: type
+        mapping:
+          intro: "#/components/schemas/IntroSlide"
+          active_days: "#/components/schemas/ActiveDaysSlide"
+          views: "#/components/schemas/ViewsSlide"
+          favorites: "#/components/schemas/FavoritesSlide"
+          favorite_category: "#/components/schemas/CategorySlide"
+          purchases: "#/components/schemas/PurchasesSlide"
+          sales: "#/components/schemas/SalesSlide"
+          messages: "#/components/schemas/MessagesSlide"
+          interests: "#/components/schemas/InterestsSlide"
+          archetype: "#/components/schemas/ArchetypeSlide"
+          final: "#/components/schemas/FinalSlide"
+
+    IntroSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          properties:
+            year:
+              $ref: "#/components/schemas/Year"
+
+    ActiveDaysSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          required:
+            - activeDays
+          properties:
+            activeDays:
+              type: integer
+              format: int32
+              minimum: 0
+              maximum: 366
+              example: 243
+
+    ViewsSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          required:
+            - views
+          properties:
+            views:
+              type: integer
+              format: int64
+              minimum: 0
+              example: 1248
+
+    FavoritesSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          required:
+            - favorites
+          properties:
+            favorites:
+              type: integer
+              format: int64
+              minimum: 0
+              example: 57
+            oldestFavorite:
+              allOf:
+                - $ref: "#/components/schemas/ListingRef"
+              nullable: true
+              description: Объявление, которое дольше всех лежит в избранном — повод вернуться к нему
+            stillAvailable:
+              type: integer
+              format: int32
+              minimum: 0
+              description: Сколько избранных объявлений всё ещё активны
+              example: 12
+
+    CategorySlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          required:
+            - category
+          properties:
+            category:
+              $ref: "#/components/schemas/CategoryRef"
+            subcategory:
+              allOf:
+                - $ref: "#/components/schemas/CategoryRef"
+              nullable: true
+            share:
+              type: integer
+              format: int32
+              minimum: 0
+              maximum: 100
+              description: Доля активности в этой категории, %
+              example: 41
+            recommendations:
+              type: array
+              description: |
+                До трёх свежих активных объявлений из любимой категории.
+                Сначала идут объявления из любимой подкатегории, если она определена.
+              maxItems: 3
+              items:
+                $ref: "#/components/schemas/ListingRef"
+
+    CategoryRef:
+      type: object
+      required:
+        - id
+        - title
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        title:
+          type: string
+          example: Электроника
+
+    PurchasesSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          required:
+            - purchases
+          properties:
+            purchases:
+              type: integer
+              format: int32
+              minimum: 0
+              example: 11
+            badge:
+              allOf:
+                - $ref: "#/components/schemas/Badge"
+              nullable: true
+
+    SalesSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          required:
+            - sales
+          properties:
+            sales:
+              type: integer
+              format: int32
+              minimum: 0
+              example: 8
+            amountRange:
+              allOf:
+                - $ref: "#/components/schemas/AmountRange"
+              nullable: true
+              description: Приблизительная сумма продаж — только диапазон
+            badge:
+              allOf:
+                - $ref: "#/components/schemas/Badge"
+              nullable: true
+
+    MessagesSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          required:
+            - messages
+          properties:
+            messages:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Количество сообщений. Содержимое переписок не раскрывается никогда
+              example: 342
+
+    InterestsSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          required:
+            - periods
+          properties:
+            periods:
+              type: array
+              description: Как менялись интересы в течение года
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/PeriodInterest"
+            shiftSummary:
+              type: string
+              example: Зимой смотрели технику, а к лету переключились на велосипеды
+
+    PeriodInterest:
+      type: object
+      required:
+        - period
+        - category
+      properties:
+        period:
+          type: string
+          enum:
+            - winter
+            - spring
+            - summer
+            - autumn
+          example: winter
+        category:
+          $ref: "#/components/schemas/CategoryRef"
+        subcategory:
+          allOf:
+            - $ref: "#/components/schemas/CategoryRef"
+          nullable: true
+        weight:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: Доля активности периода, приходящаяся на эту категорию, %
+          example: 48
+
+    ArchetypeSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          required:
+            - archetype
+          properties:
+            archetype:
+              $ref: "#/components/schemas/Archetype"
+
+    FinalSlide:
+      allOf:
+        - $ref: "#/components/schemas/SlideBase"
+        - type: object
+          properties:
+            stats:
+              type: array
+              description: Плитки с итоговыми числами года
+              items:
+                $ref: "#/components/schemas/StatTile"
+            actions:
+              type: array
+              description: Что предлагается сделать после просмотра итогов
+              items:
+                $ref: "#/components/schemas/Cta"
+
+    StatTile:
+      type: object
+      description: |
+        Одно число финального экрана. Иконку клиент выбирает по `code`,
+        подпись приходит готовой, потому что она согласуется с числом.
+      required:
+        - code
+        - value
+        - label
+      properties:
+        code:
+          type: string
+          enum:
+            - active_days
+            - views
+            - favorites
+            - messages
+            - seasons
+          example: messages
+        value:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 128
+        label:
+          type: string
+          example: сообщений отправлено
+
+    SharedRecapLink:
+      type: object
+      required:
+        - token
+        - url
+        - createdAt
+      properties:
+        token:
+          $ref: "#/components/schemas/SharedRecapToken"
+        url:
+          type: string
+          format: uri
+          example: https://recap.example.com/shared-recaps/h8T5P0Bm7rWqLk6uDe2Ftg
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-01-09T08:35:00Z"
+
+    SharedRecap:
+      type: object
+      description: |
+        Фиксированная публичная версия итогов. Формируется сервером по списку
+        разрешённых полей, а не фильтруется клиентом из приватного recap.
+      required:
+        - year
+        - displayName
+        - archetype
+        - activeDays
+        - badges
+      properties:
+        year:
+          $ref: "#/components/schemas/Year"
+        displayName:
+          type: string
+          description: Имя без фамилии
+          minLength: 1
+          maxLength: 64
+          example: Пётр
+        archetype:
+          $ref: "#/components/schemas/SharedArchetype"
+        activeDays:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 366
+          example: 243
+        views:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 1248
+        topCategory:
+          $ref: "#/components/schemas/SharedCategory"
+        interestSummary:
+          type: string
+          minLength: 1
+          maxLength: 512
+          example: Зимой — техника, летом — велосипеды.
+        badges:
+          type: array
+          maxItems: 3
+          items:
+            $ref: "#/components/schemas/SharedBadge"
+
+    SharedArchetype:
+      type: object
+      description: |
+        Архетип без персональных причин и значений исходных метрик. Публичное
+        описание формулируется нейтрально, без обращения к владельцу или зрителю.
+      required:
+        - code
+        - title
+        - description
+      properties:
+        code:
+          type: string
+          enum:
+            - collector
+            - dealmaker
+            - negotiator
+            - explorer
+          example: explorer
+        title:
+          type: string
+          minLength: 1
+          example: Исследователь
+        description:
+          type: string
+          description: Нейтральное публичное объяснение смысла архетипа
+          minLength: 1
+          example: Интерес к разным категориям и постоянный поиск новых находок.
+
+    SharedCategory:
+      type: object
+      description: Любимая категория и, если определена, подкатегория пользователя
+      required:
+        - categoryTitle
+      properties:
+        categoryTitle:
+          type: string
+          minLength: 1
+          maxLength: 128
+          example: Электроника
+        subcategoryTitle:
+          type: string
+          minLength: 1
+          maxLength: 128
+          example: Смартфоны
+
+    SharedBadge:
+      type: object
+      description: |
+        Бейдж с безопасным публичным описанием. Описание объясняет смысл
+        достижения, но не раскрывает числовое значение или порог выдачи.
+      required:
+        - code
+        - title
+        - description
+        - level
+      properties:
+        code:
+          type: string
+          minLength: 1
+          example: buyer_gold
+        title:
+          type: string
+          minLength: 1
+          example: Знаток покупок
+        description:
+          type: string
+          description: Нейтральное публичное объяснение смысла достижения без указания порога
+          minLength: 1
+          maxLength: 255
+          example: Умение находить подходящие вещи на Авито.
+        level:
+          type: string
+          enum:
+            - bronze
+            - silver
+            - gold
+          example: gold
+        iconUrl:
+          type: string
+          format: uri

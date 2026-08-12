@@ -1,0 +1,33 @@
+name: Integration tests reusable
+
+on:
+  workflow_call:
+    inputs:
+      go-version-file:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  integration-test:
+    name: Run integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@v5.4.0
+        with:
+          go-version-file: ${{ inputs.go-version-file }}
+          cache: false
+
+      - name: Generate code
+        run: make generate
+
+      - name: Run integration tests when present
+        run: make test-integration

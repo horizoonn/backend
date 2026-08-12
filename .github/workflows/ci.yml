@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    uses: ./.github/workflows/lint-reusable.yml
+    with:
+      go-version-file: backend/recap/go.mod
+
+  test:
+    needs: lint
+    uses: ./.github/workflows/test-reusable.yml
+    with:
+      go-version-file: backend/recap/go.mod
+
+  integration-test:
+    needs: test
+    uses: ./.github/workflows/test-integration-reusable.yml
+    with:
+      go-version-file: backend/recap/go.mod

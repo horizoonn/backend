@@ -1,0 +1,26 @@
+all: false
+template: testify
+dir: "{{.InterfaceDir}}/mocks"
+filename: "mock_{{.InterfaceName | snakecase}}.go"
+pkgname: mocks
+structname: "Mock{{.InterfaceName | camelcase | firstUpper}}"
+formatter: goimports
+force-file-write: true
+
+packages:
+  github.com/avito-hackaton-team/avito-recap/backend/recap/internal/usecase/profile:
+    interfaces:
+      profileRepository:
+
+  github.com/avito-hackaton-team/avito-recap/backend/recap/internal/usecase/recap:
+    interfaces:
+      activityRepository:
+      recapRepository:
+      profileRepository:
+      listingRepository:
+
+  github.com/avito-hackaton-team/avito-recap/backend/recap/internal/usecase/sharedrecap:
+    interfaces:
+      recapRepository:
+      profileRepository:
+      sharedRecapRepository:
