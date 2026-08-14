@@ -3,12 +3,14 @@ name: CI
 on:
   push:
     branches:
-      - main
       - develop
   pull_request:
     branches:
       - main
       - develop
+  merge_group:
+    types:
+      - checks_requested
   workflow_dispatch:
 
 permissions:
@@ -19,6 +21,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  deployment-config:
+    uses: ./.github/workflows/deployment-config-reusable.yml
+
+  frontend:
+    uses: ./.github/workflows/frontend-reusable.yml
+
   lint:
     uses: ./.github/workflows/lint-reusable.yml
     with:

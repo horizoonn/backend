@@ -6,6 +6,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import { listProfiles, userMessage } from '../api/client';
 import type { Profile } from '../api/types';
@@ -17,6 +18,7 @@ interface StartScreenProps {
 
 export function StartScreen({ year, onStart }: StartScreenProps) {
   const pickerRef = useRef<HTMLDivElement>(null);
+  const pickerListRef = useRef<HTMLDivElement>(null);
   const pickerToggleRef = useRef<HTMLButtonElement>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selected, setSelected] = useState<Profile | null>(null);
@@ -88,11 +90,27 @@ export function StartScreen({ year, onStart }: StartScreenProps) {
     };
   }, [pickerOpen]);
 
+  useEffect(() => {
+    if (!pickerOpen) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const selectedOption = pickerListRef.current?.querySelector<HTMLButtonElement>(
+        '[role="radio"][aria-checked="true"]',
+      );
+      const firstOption = pickerListRef.current?.querySelector<HTMLButtonElement>('[role="radio"]');
+      (selectedOption ?? firstOption)?.focus();
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [pickerOpen]);
+
   return (
     <main className="start">
       <header className="start__top">
         <a className="start__wordmark" href="/" aria-label="Авито, на главную">
-          Авито
+          <img src="/brand/avito-logo.svg" alt="" />
         </a>
 
         <p className="start__privacy">
@@ -109,7 +127,6 @@ export function StartScreen({ year, onStart }: StartScreenProps) {
             className="picker__toggle"
             aria-expanded={pickerOpen}
             aria-controls="demo-profile-list"
-            aria-haspopup="dialog"
             onClick={() => setPickerOpen((open) => !open)}
             disabled={loading || profiles.length === 0}
           >
@@ -125,11 +142,16 @@ export function StartScreen({ year, onStart }: StartScreenProps) {
             <div
               className="picker__menu"
               id="demo-profile-list"
-              role="dialog"
               aria-label="Выбор демо-сценария"
             >
               <p className="picker__caption">Демо-сценарии</p>
-              <div className="picker__list" role="radiogroup" aria-label="Тестовые профили">
+              <div
+                className="picker__list"
+                ref={pickerListRef}
+                role="radiogroup"
+                aria-label="Тестовые профили"
+                onKeyDown={handleProfileListKeyDown}
+              >
                 {profiles.map((profile) => (
                   <button
                     type="button"
@@ -140,6 +162,7 @@ export function StartScreen({ year, onStart }: StartScreenProps) {
                     onClick={() => {
                       setSelected(profile);
                       setPickerOpen(false);
+                      pickerToggleRef.current?.focus();
                     }}
                   >
                     <ProfileAvatar profile={profile} />
@@ -211,6 +234,33 @@ export function StartScreen({ year, onStart }: StartScreenProps) {
       </div>
     </main>
   );
+}
+
+function handleProfileListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+    return;
+  }
+
+  const options = Array.from(
+    event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+  );
+  const currentIndex = options.indexOf(document.activeElement as HTMLButtonElement);
+
+  if (options.length === 0) {
+    return;
+  }
+
+  event.preventDefault();
+  const nextIndex =
+    event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? options.length - 1
+        : event.key === 'ArrowDown'
+          ? (Math.max(currentIndex, -1) + 1) % options.length
+          : (currentIndex <= 0 ? options.length : currentIndex) - 1;
+
+  options[nextIndex]?.focus();
 }
 
 function ProfileAvatar({ profile }: { profile: Profile | null }) {

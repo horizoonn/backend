@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 
 import { shareRecap, userMessage } from '../api/client';
 import { SlideView } from '../components/Slides';
 import type { Profile, Recap } from '../api/types';
+import { isSupportedSlide } from '../lib/recapLogic';
 
 interface StoryScreenProps {
   recap: Recap;
@@ -12,8 +14,10 @@ interface StoryScreenProps {
 
 export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
   const storyContentRef = useRef<HTMLDivElement>(null);
+  const gestureStartRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const [index, setIndex] = useState(0);
   const [archetypeEvidence, setArchetypeEvidence] = useState(false);
+  const [categoryQuizAnswers, setCategoryQuizAnswers] = useState<Record<string, string>>({});
   const [shareState, setShareState] = useState<
     | { status: 'idle' }
     | { status: 'loading' }
@@ -21,7 +25,7 @@ export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
     | { status: 'failed'; message: string }
   >({ status: 'idle' });
 
-  const slides = recap.slides;
+  const slides = recap.slides.filter(isSupportedSlide);
   const slide = slides[index];
   const isLast = index === slides.length - 1;
   const isIntro = slide?.type === 'intro';
@@ -35,21 +39,23 @@ export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
   const isInterests = slide?.type === 'interests';
   const isArchetype = slide?.type === 'archetype';
   const isFinal = slide?.type === 'final';
+  const categoryQuizKey = isFavoriteCategory ? slide.category.id : undefined;
+  const categoryQuizEnabled = isFavoriteCategory && (slide.quizOptions?.length ?? 0) >= 2;
+  const selectedCategoryQuizOptionId = categoryQuizKey
+    ? categoryQuizAnswers[categoryQuizKey]
+    : undefined;
+  const isCategoryQuizQuestion = categoryQuizEnabled && !selectedCategoryQuizOptionId;
+  const favoriteCategorySlide = slides.find(
+    (item): item is Extract<(typeof slides)[number], { type: 'favorite_category' }> =>
+      item.type === 'favorite_category',
+  );
+  const interestsSlide = slides.find(
+    (item): item is Extract<(typeof slides)[number], { type: 'interests' }> =>
+      item.type === 'interests',
+  );
   const storyClassName = [
     'story',
-    isIntro ||
-    isActiveDays ||
-    isViews ||
-    isMessages ||
-    isFavorites ||
-    isFavoriteCategory ||
-    isPurchases ||
-    isSales ||
-    isInterests ||
-    isArchetype ||
-    isFinal
-      ? 'story--light'
-      : '',
+    'story--light',
     isIntro ? 'story--intro' : '',
     isActiveDays ? 'story--active-days' : '',
     isViews ? 'story--views' : '',
@@ -122,10 +128,14 @@ export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
     }
 
     setArchetypeEvidence(false);
-    setIndex((current) => current - 1);
+    setIndex((current) => Math.max(0, current - 1));
   };
 
   const showNext = () => {
+    if (isCategoryQuizQuestion) {
+      return;
+    }
+
     if (isArchetype && !archetypeEvidence) {
       setArchetypeEvidence(true);
       return;
@@ -140,17 +150,72 @@ export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
     setIndex((current) => current + 1);
   };
 
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary || event.button !== 0 || isInteractiveTarget(event.target)) {
+      gestureStartRef.current = null;
+      return;
+    }
+
+    gestureStartRef.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+    };
+  };
+
+  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = gestureStartRef.current;
+    gestureStartRef.current = null;
+
+    if (!start || start.pointerId !== event.pointerId || isFinal) {
+      return;
+    }
+
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    const horizontalDistance = Math.abs(deltaX);
+
+    if (horizontalDistance >= 48 && horizontalDistance > Math.abs(deltaY) * 1.25) {
+      if (deltaX < 0) {
+        showNext();
+      } else if (index > 0 || archetypeEvidence) {
+        showPrevious();
+      }
+      return;
+    }
+
+    if (window.innerWidth > 767 || horizontalDistance > 10 || Math.abs(deltaY) > 10) {
+      return;
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const position = (event.clientX - bounds.left) / bounds.width;
+
+    if (position <= 0.35 && (index > 0 || archetypeEvidence)) {
+      showPrevious();
+    } else if (position >= 0.65) {
+      showNext();
+    }
+  };
+
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
+      storyContentRef.current?.scrollTo({ top: 0 });
       storyContentRef.current?.focus({ preventScroll: true });
     });
 
     return () => window.cancelAnimationFrame(frameId);
-  }, [index, archetypeEvidence]);
+  }, [index, archetypeEvidence, selectedCategoryQuizOptionId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey
+      ) {
         return;
       }
 
@@ -173,6 +238,10 @@ export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
 
       if (event.key === 'ArrowRight' && !isFinal) {
         event.preventDefault();
+        if (isCategoryQuizQuestion) {
+          return;
+        }
+
         if (isArchetype && !archetypeEvidence) {
           setArchetypeEvidence(true);
         } else {
@@ -184,7 +253,7 @@ export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [archetypeEvidence, index, isArchetype, isFinal, slides.length]);
+  }, [archetypeEvidence, index, isArchetype, isCategoryQuizQuestion, isFinal, slides.length]);
 
   if (!slide) {
     return null;
@@ -194,7 +263,7 @@ export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
     <div className={storyClassName}>
       <header className="story__top">
         <button type="button" className="story__back" onClick={onExit}>
-          ‹ Назад
+          ‹ К профилям
         </button>
 
         <div
@@ -220,11 +289,18 @@ export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
       <div
         className="story__content"
         ref={storyContentRef}
+        role="region"
         tabIndex={-1}
         aria-label={`Слайд ${index + 1} из ${slides.length}`}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={() => {
+          gestureStartRef.current = null;
+        }}
       >
         <SlideView
           slide={slide}
+          recapId={recap.id}
           profileName={profile.name}
           onShare={() => void share()}
           shareDisabled={shareState.status === 'loading'}
@@ -239,36 +315,59 @@ export function StoryScreen({ recap, profile, onExit }: StoryScreenProps) {
               : undefined
           }
           shareUrl={shareState.status === 'success' ? shareState.url : undefined}
+          selectedCategoryQuizOptionId={selectedCategoryQuizOptionId}
+          onSelectCategoryQuizOption={(categoryId) => {
+            if (!categoryQuizKey) {
+              return;
+            }
+
+            setCategoryQuizAnswers((current) => ({
+              ...current,
+              [categoryQuizKey]: categoryId,
+            }));
+          }}
+          favoriteCategorySlide={favoriteCategorySlide}
+          interestSummary={interestsSlide?.shiftSummary}
         />
       </div>
 
-      {!isFinal ? <footer className="story__bottom">
-        <button
-          type="button"
-          className="story__circle"
-          disabled={index === 0 && !archetypeEvidence}
-          aria-label="Предыдущий слайд"
-          onClick={showPrevious}
-        >
-          ←
-        </button>
+      {!isFinal ? (
+        <footer className="story__bottom">
+          <button
+            type="button"
+            className="story__circle"
+            disabled={index === 0 && !archetypeEvidence}
+            aria-label="Предыдущий слайд"
+            onClick={showPrevious}
+          >
+            ←
+          </button>
 
-        <button
-          type="button"
-          className="button button--light"
-          onClick={showNext}
-        >
-          {isArchetype
-            ? archetypeEvidence
-              ? 'К итогам →'
-              : 'Почему?'
-            : isLast
-              ? `К профилям, ${profile.name}`
-              : isIntro
-                ? 'Начать →'
-                : 'Дальше →'}
-        </button>
-      </footer> : null}
+          <button
+            type="button"
+            className="button button--light"
+            disabled={isCategoryQuizQuestion}
+            onClick={showNext}
+          >
+            {isArchetype
+              ? archetypeEvidence
+                ? 'К итогам →'
+                : 'Почему?'
+              : isLast
+                ? `К профилям, ${profile.name}`
+                : isIntro
+                  ? 'Начать →'
+                  : 'Дальше →'}
+          </button>
+        </footer>
+      ) : null}
     </div>
+  );
+}
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest('button, a, input, select, textarea, [role="button"]') !== null
   );
 }

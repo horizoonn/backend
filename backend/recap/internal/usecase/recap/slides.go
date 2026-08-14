@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -103,9 +104,16 @@ type (
 		Year int32 `json:"year"`
 	}
 
+	dayActivityRef struct {
+		Date    string `json:"date"`
+		Actions int32  `json:"actions"`
+	}
+
 	activeDaysSlide struct {
 		slideBase
-		ActiveDays int32 `json:"activeDays"`
+		ActiveDays int32            `json:"activeDays"`
+		Days       []dayActivityRef `json:"days,omitempty"`
+		Peak       *dayActivityRef  `json:"peak,omitempty"`
 	}
 
 	viewsSlide struct {
@@ -122,10 +130,11 @@ type (
 
 	categorySlide struct {
 		slideBase
-		Category        categoryRef  `json:"category"`
-		Subcategory     *categoryRef `json:"subcategory,omitempty"`
-		Share           int32        `json:"share"`
-		Recommendations []listingRef `json:"recommendations,omitempty"`
+		Category        categoryRef   `json:"category"`
+		Subcategory     *categoryRef  `json:"subcategory,omitempty"`
+		Share           int32         `json:"share"`
+		QuizOptions     []categoryRef `json:"quizOptions,omitempty"`
+		Recommendations []listingRef  `json:"recommendations,omitempty"`
 	}
 
 	purchasesSlide struct {
@@ -181,6 +190,7 @@ type slideInput struct {
 	activity                entity.UserActivity
 	categories              []entity.CategoryScore
 	seasons                 []seasonLeader
+	days                    []entity.DayActivity
 	archetype               entity.Archetype
 	oldestFavorite          *entity.FavoriteListingPreview
 	categoryRecommendations []entity.ListingPreview
@@ -233,6 +243,8 @@ func buildIntroSlide(input slideInput) (any, bool) {
 }
 
 func buildActiveDaysSlide(input slideInput) (any, bool) {
+	days := dayActivityRefs(input.days)
+
 	return activeDaysSlide{
 		slideBase: slideBase{
 			Type:     slideActiveDays,
@@ -240,7 +252,48 @@ func buildActiveDaysSlide(input slideInput) (any, bool) {
 			Subtitle: activeDaysHeadline(input.activity.ActiveDays),
 		},
 		ActiveDays: toInt32(input.activity.ActiveDays),
+		Days:       days,
+		Peak:       peakDay(days),
 	}, true
+}
+
+func dayActivityRefs(days []entity.DayActivity) []dayActivityRef {
+	if len(days) == 0 {
+		return nil
+	}
+
+	refs := make([]dayActivityRef, 0, len(days))
+	for _, day := range days {
+		if day.Actions <= 0 {
+			continue
+		}
+
+		refs = append(refs, dayActivityRef{
+			Date:    day.Date.UTC().Format(time.DateOnly),
+			Actions: toInt32(day.Actions),
+		})
+	}
+
+	if len(refs) == 0 {
+		return nil
+	}
+
+	return refs
+}
+
+func peakDay(days []dayActivityRef) *dayActivityRef {
+	if len(days) == 0 {
+		return nil
+	}
+
+	best := days[0]
+	for _, day := range days[1:] {
+		if day.Actions > best.Actions {
+			best = day
+		}
+	}
+
+	return &best
 }
 
 func buildViewsSlide(input slideInput) (any, bool) {
@@ -354,8 +407,31 @@ func buildCategorySlide(input slideInput) (any, bool) {
 		Category:        categoryRef{ID: favorite.CategoryID, Title: favorite.Title},
 		Subcategory:     subcategoryRefOf(favorite),
 		Share:           share,
+		QuizOptions:     categoryQuizOptionsOf(input.categories),
 		Recommendations: listingRefsOf(input.categoryRecommendations),
 	}, true
+}
+
+func categoryQuizOptionsOf(categories []entity.CategoryScore) []categoryRef {
+	if len(categories) < 2 {
+		return nil
+	}
+
+	limit := min(3, len(categories))
+	options := make([]categoryRef, 0, limit)
+	for _, category := range categories[:limit] {
+		options = append(options, categoryRef{ID: category.CategoryID, Title: category.Title})
+	}
+
+	sort.Slice(options, func(i, j int) bool {
+		if options[i].Title != options[j].Title {
+			return options[i].Title < options[j].Title
+		}
+
+		return options[i].ID.String() < options[j].ID.String()
+	})
+
+	return options
 }
 
 func buildInterestsSlide(input slideInput) (any, bool) {
@@ -416,6 +492,10 @@ func buildArchetypeSlide(input slideInput) (any, bool) {
 
 func buildFinalSlide(input slideInput) (any, bool) {
 	actions := []cta{{Action: ctaShareRecap, Title: "Поделиться итогами"}}
+
+	if input.archetype.UserArchetype == entity.ArchetypeDealmaker {
+		actions = append(actions, cta{Action: ctaCreateListing, Title: "Разместить объявление"})
+	}
 
 	if len(input.categories) > 0 {
 		favorite := input.categories[0]

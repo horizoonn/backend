@@ -11,9 +11,17 @@ import (
 
 func ConvertEntityProfileToAPIProfile(profile entity.Profile) recapapi.Profile {
 	result := recapapi.Profile{
-		ID:      recapapi.UUID(profile.ID),
-		Name:    profile.Name,
-		Surname: profile.Surname,
+		ID:           recapapi.UUID(profile.ID),
+		Name:         profile.Name,
+		Surname:      profile.Surname,
+		RegisteredAt: recapapi.NewOptDateTime(profile.RegisteredAt),
+	}
+
+	if profile.AvatarURL != nil {
+		avatarURL, err := url.Parse(*profile.AvatarURL)
+		if err == nil {
+			result.AvatarUrl = recapapi.NewOptNilURI(*avatarURL)
+		}
 	}
 
 	if profile.Hint != "" {

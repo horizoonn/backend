@@ -18,6 +18,13 @@ type (
 	recapService interface {
 		Create(ctx context.Context, profileID uuid.UUID, year int) (entity.RecapCreation, error)
 		Get(ctx context.Context, recapID uuid.UUID) (entity.Recap, error)
+		OpenSimilarRecommendation(
+			ctx context.Context,
+			recapID uuid.UUID,
+			listingID uuid.UUID,
+		) (url.URL, error)
+		OpenAction(ctx context.Context, recapID uuid.UUID, action string) (url.URL, error)
+		OpenHome(ctx context.Context) url.URL
 	}
 
 	profileService interface {

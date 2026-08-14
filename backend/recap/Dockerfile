@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/recap ./cmd/app \
 FROM debian:13-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --no-create-home app

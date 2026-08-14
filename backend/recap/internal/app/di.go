@@ -89,6 +89,7 @@ func buildHTTPHandler(
 	}
 
 	mux := http.NewServeMux()
+	registerHealthEndpoints(mux, pool, cfg.Repository.OperationTimeout)
 	mux.Handle(apiPrefix+"/", http.StripPrefix(apiPrefix, server))
 
 	return mux, nil

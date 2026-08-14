@@ -1,4 +1,5 @@
 import type { Profile } from '../api/types';
+import { avitoHomeRedirectUrl } from '../api/client';
 
 interface LowActivityScreenProps {
   profile: Profile;
@@ -16,14 +17,13 @@ export function LowActivityScreen({ profile, onExit }: LowActivityScreenProps) {
           Чтобы собрать осмысленные итоги, нужно чуть больше действий.
         </p>
         <p className="recap-state__context">
-          {profile.name}, зато следующий год уже можно наполнить находками, сообщениями и
-          сделками.
+          {profile.name}, зато следующий год уже можно наполнить находками, сообщениями и сделками.
         </p>
 
         <div className="recap-state__actions">
-          <span className="button recap-state__concept-action" role="note">
+          <a className="button recap-state__concept-action" href={avitoHomeRedirectUrl}>
             Перейти на Авито
-          </span>
+          </a>
           <button type="button" className="recap-state__secondary" onClick={onExit}>
             Выбрать другой профиль
           </button>

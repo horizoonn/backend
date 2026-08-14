@@ -1,0 +1,43 @@
+name: Deployment configuration
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate deployment configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: deploy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+
+      - name: Validate shell scripts
+        run: |
+          bash -n deploy-release.sh rollback-release.sh
+          shellcheck deploy-release.sh rollback-release.sh
+
+      - name: Validate production Compose
+        env:
+          PRODUCTION_ENV_FILE: production.env.example
+        run: |
+          docker compose \
+            --env-file production.env.example \
+            --env-file image.env.example \
+            --file compose.production.yml \
+            config --quiet
+
+      - name: Validate Caddy configuration
+        run: |
+          docker run --rm \
+            --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.4-alpine \
+            caddy validate --config /etc/caddy/Caddyfile

@@ -1,4 +1,5 @@
 # Binaries for programs and plugins
+/bin/
 *.exe
 *.exe~
 *.dll
@@ -16,6 +17,14 @@ profile.cov
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+/node_modules/
+
+# Generated Go code
+/backend/recap/generated/
+/backend/recap/internal/controller/http/recap/mocks/
+/backend/recap/internal/usecase/profile/mocks/
+/backend/recap/internal/usecase/recap/mocks/
+/backend/recap/internal/usecase/sharedrecap/mocks/
 
 # Go workspace file
 go.work
@@ -23,7 +32,13 @@ go.work.sum
 
 # env file
 .env
+/deploy/.env.production
+/deploy/current-image.env
+/deploy/previous-image.env
 
 # Editor/IDE
-# .idea/
+.idea/
 # .vscode/
+
+# claude context file
+CLAUDE.md

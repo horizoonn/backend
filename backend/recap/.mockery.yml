@@ -8,6 +8,12 @@ formatter: goimports
 force-file-write: true
 
 packages:
+  github.com/avito-hackaton-team/avito-recap/backend/recap/internal/controller/http/recap:
+    interfaces:
+      recapService:
+      profileService:
+      sharedRecapService:
+
   github.com/avito-hackaton-team/avito-recap/backend/recap/internal/usecase/profile:
     interfaces:
       profileRepository:

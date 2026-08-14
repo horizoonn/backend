@@ -1,4 +1,4 @@
-name: Integration tests reusable
+name: End-to-end tests reusable
 
 on:
   workflow_call:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  integration-test:
-    name: Run integration tests
+  e2e-test:
+    name: Run backend E2E tests
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
@@ -29,5 +29,5 @@ jobs:
       - name: Generate code
         run: make generate
 
-      - name: Run integration tests when present
-        run: make test-integration
+      - name: Run backend E2E tests
+        run: make test-e2e

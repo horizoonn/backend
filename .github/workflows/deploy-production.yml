@@ -1,0 +1,121 @@
+name: Deploy production
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: Full Git commit SHA already published to GHCR
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: Full Git commit SHA already published to GHCR
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy production image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://recap50.ru
+
+    steps:
+      - name: Checkout deployment files
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.image-tag }}
+          fetch-depth: 0
+
+      - name: Validate production commit
+        env:
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$IMAGE_TAG"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$IMAGE_TAG" origin/main
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Create versioned release directory
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            install -d -m 750 "/opt/avito-recap/releases/$IMAGE_TAG"
+
+      - name: Upload versioned deployment bundle
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" \
+            deploy/Caddyfile \
+            deploy/compose.production.yml \
+            deploy/deploy-release.sh \
+            deploy/rollback-release.sh \
+            "$DEPLOY_USER@$DEPLOY_HOST:/opt/avito-recap/releases/$IMAGE_TAG/"
+
+      - name: Deploy commit image
+        id: deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            bash "/opt/avito-recap/releases/$IMAGE_TAG/deploy-release.sh" "$IMAGE_TAG"
+
+      - name: Verify public endpoints
+        id: smoke
+        run: |
+          curl --fail --silent --show-error --retry 10 --retry-all-errors \
+            --retry-delay 3 https://recap50.ru/healthz
+          curl --fail --silent --show-error --retry 10 --retry-all-errors \
+            --retry-delay 3 https://recap50.ru/readyz
+          curl --fail --silent --show-error --retry 10 --retry-all-errors \
+            --retry-delay 3 https://recap50.ru/api/v1/profiles >/dev/null
+
+      - name: Roll back failed public release
+        if: failure() && steps.deploy.outcome == 'success' && steps.smoke.outcome == 'failure'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          if ! ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            test -f /opt/avito-recap/previous-image.env; then
+            echo "No previous release is available; manual recovery is required." >&2
+            exit 0
+          fi
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            bash /opt/avito-recap/current-release/rollback-release.sh

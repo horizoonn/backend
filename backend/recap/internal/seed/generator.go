@@ -152,7 +152,7 @@ func (g *Generator) generatePublishedListings(state *generationState, scenario S
 			strconv.Itoa(index),
 		}, ":")
 
-		listing, err := g.newListing(state, rng, faker, key, seller.ID, category, createdAt)
+		listing, err := g.newListing(state, rng, faker, key, index, seller.ID, category, createdAt)
 		if err != nil {
 			return fmt.Errorf("generate published listing for %s: %w", scenario.Profile.Code, err)
 		}
@@ -273,6 +273,7 @@ func (f *funnelGeneration) generateListing(index int) (ListingRow, time.Time, er
 		f.rng,
 		f.faker,
 		key,
+		index,
 		f.seller.ID,
 		f.plan.Category,
 		createdAt,
@@ -387,6 +388,7 @@ func (g *Generator) newListing(
 	rng *rand.Rand,
 	faker *gofakeit.Faker,
 	key string,
+	titleVariant int,
 	sellerID uuid.UUID,
 	categoryCode CategoryCode,
 	createdAt time.Time,
@@ -398,6 +400,13 @@ func (g *Generator) newListing(
 
 	subcategory := category.spec.Subcategories[rng.IntN(len(category.spec.Subcategories))]
 	product := subcategory.Products[rng.IntN(len(subcategory.Products))]
+	if len(product.Titles) == 0 {
+		return ListingRow{}, fmt.Errorf(
+			"product in subcategory %q has no listing titles",
+			subcategory.Code,
+		)
+	}
+
 	subcategoryID := stableID("subcategory", string(categoryCode), subcategory.Code)
 	description := product.Description + ". " + faker.RandomString(listingDetails)
 	price := randomPrice(rng, product.MinPrice, product.MaxPrice)
@@ -405,7 +414,7 @@ func (g *Generator) newListing(
 	return ListingRow{
 		ID:            g.eventID("listing", key),
 		SellerID:      sellerID,
-		Title:         product.Title + " " + faker.Numerify("###"),
+		Title:         product.Titles[titleVariant%len(product.Titles)],
 		Description:   &description,
 		Price:         price,
 		CategoryID:    category.row.ID,

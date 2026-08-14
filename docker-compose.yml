@@ -51,7 +51,7 @@ services:
       POSTGRES_PORT: "5432"
 
     entrypoint: ["/app/seed"]
-    command: ["--year=2026", "--seed=20250807"]
+    command: ["--year=${RECAP_YEAR:-2026}", "--seed=20260807"]
 
     depends_on:
       postgres:

@@ -2,13 +2,18 @@ import { useState } from 'react';
 
 import type { SharedRecap } from '../api/types';
 import { BadgeCard } from '../components/BadgeCard';
+import styles from './PublicRecapScreen.module.css';
 
 function artUrl(name: string): string {
-  return `/art/${name}.png`;
+  return `/art/${name}.webp`;
 }
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat('ru-RU').format(value);
+}
+
+function publicBadgeIcon(code: string): string {
+  return artUrl(code.startsWith('seller') ? 'badge-sales' : 'badge');
 }
 
 export function PublicRecapScreen({ recap }: { recap: SharedRecap }) {
@@ -55,91 +60,116 @@ export function PublicRecapScreen({ recap }: { recap: SharedRecap }) {
   };
 
   return (
-    <main className="public-recap">
-      <header className="public-poster__top">
+    <main className={styles.page}>
+      <header className={styles.top}>
         <a href="/" aria-label="Авито — создать свои итоги">
-          Авито
+          <img src="/brand/avito-logo.svg" alt="" />
         </a>
-        <span>{recap.year}</span>
+        <span>Публичные итоги · {recap.year}</span>
       </header>
 
-      <section className="public-poster" aria-labelledby="public-recap-title">
-        <header className="public-poster__identity">
-          <p className="public-poster__label">ПУБЛИЧНЫЕ ИТОГИ {recap.year}</p>
-          <h1 id="public-recap-title">
-            {recap.displayName} — <span>{recap.archetype.title}</span>
-          </h1>
-          <p className="public-poster__description">{recap.archetype.description}</p>
-          <p className="public-poster__privacy">
-            Без приватных деталей — только безопасные моменты года.
-          </p>
-        </header>
+      <section className={styles.poster} aria-labelledby="public-recap-title">
+        <div className={styles.content}>
+          <header className={styles.identity}>
+            <p className={styles.label}>
+              ИТОГИ {recap.displayName.toLocaleUpperCase('ru-RU')} · {recap.year}
+            </p>
+            <h1 id="public-recap-title">
+              <span className={styles.name}>{recap.displayName} —</span>
+              <span className={styles.archetype}>{recap.archetype.title}</span>
+            </h1>
+            <p className={styles.description}>{recap.archetype.description}</p>
+            <p className={styles.privacy}>Публичная версия · без приватных деталей</p>
+          </header>
 
-        <div className="public-poster__visual" aria-hidden="true">
-          <div>
-            <img src={artUrl(`archetype-${recap.archetype.code}`)} alt="" />
+          <div className={styles.facts}>
+            <article>
+              <img src={artUrl('active_days')} alt="" aria-hidden="true" />
+              <div>
+                <strong>{formatNumber(recap.activeDays)}</strong>
+                <span>активных дней</span>
+              </div>
+            </article>
+            {typeof recap.views === 'number' ? (
+              <article>
+                <img src={artUrl('views')} alt="" aria-hidden="true" />
+                <div>
+                  <strong>{formatNumber(recap.views)}</strong>
+                  <span>просмотров</span>
+                </div>
+              </article>
+            ) : null}
+            {recap.topCategory ? (
+              <article className={styles.categoryFact}>
+                <img src={artUrl('interests')} alt="" aria-hidden="true" />
+                <div>
+                  <strong>{recap.topCategory.categoryTitle}</strong>
+                  <span>главный интерес</span>
+                  {recap.topCategory.subcategoryTitle ? (
+                    <small>{recap.topCategory.subcategoryTitle}</small>
+                  ) : null}
+                </div>
+              </article>
+            ) : null}
+          </div>
+
+          <div className={styles.footer}>
+            {recap.interestSummary ? (
+              <article className={styles.interest}>
+                <span aria-hidden="true">“</span>
+                <div>
+                  <strong>ИНТЕРЕСЫ ГОДА</strong>
+                  <p>{recap.interestSummary}</p>
+                </div>
+              </article>
+            ) : null}
+
+            <div className={styles.actions}>
+              <a href="/">Создать свои итоги</a>
+              <button
+                type="button"
+                onClick={() => void share()}
+                disabled={shareState.status === 'loading'}
+              >
+                {shareState.status === 'loading'
+                  ? 'Подготавливаем ссылку…'
+                  : 'Поделиться карточкой ↗'}
+              </button>
+              <p role="status">{shareState.status === 'success' ? shareState.message : '\u00a0'}</p>
+            </div>
           </div>
         </div>
 
-        <div className="public-poster__facts">
-          <article className="public-poster__fact--active">
-            <img src={artUrl('active_days')} alt="" aria-hidden="true" />
-            <strong>{formatNumber(recap.activeDays)}</strong>
-            <span>активных дней</span>
-          </article>
-          {typeof recap.views === 'number' ? (
-            <article className="public-poster__fact--views">
-              <img src={artUrl('views')} alt="" aria-hidden="true" />
-              <strong>{formatNumber(recap.views)}</strong>
-              <span>просмотров</span>
-            </article>
-          ) : null}
-          {recap.topCategory ? (
-            <article>
-              <strong>{recap.topCategory.categoryTitle}</strong>
-              <span>главный интерес</span>
-              {recap.topCategory.subcategoryTitle ? (
-                <small>{recap.topCategory.subcategoryTitle}</small>
-              ) : null}
-            </article>
-          ) : null}
-        </div>
+        <aside
+          className={styles.visualPanel}
+          aria-label="Архетип и достижения года"
+        >
+          <div className={styles.visualHeading}>
+            <span>АРХЕТИП ГОДА</span>
+            <strong aria-hidden="true">{recap.archetype.title.charAt(0).toLocaleUpperCase('ru-RU')}</strong>
+          </div>
 
-        {recap.interestSummary ? (
-          <article className="public-poster__interest">
-            <span>ИНТЕРЕСЫ ГОДА</span>
-            <p>{recap.interestSummary}</p>
-          </article>
-        ) : null}
+          <div className={styles.visual}>
+            <img src={artUrl(`archetype-${recap.archetype.code}`)} alt="" aria-hidden="true" />
+          </div>
 
-        {recap.badges.length ? (
-          <section className="public-poster__badges" aria-labelledby="public-badges-title">
-            <h2 id="public-badges-title">Достижения года</h2>
-            <div>
+          {recap.badges.length ? (
+            <section className={styles.badges} aria-label="Достижения года">
               {recap.badges.map((badge) => (
                 <BadgeCard
                   key={badge.code}
                   title={badge.title}
                   description={badge.description}
                   level={badge.level}
-                  iconUrl={
-                    badge.iconUrl ?? artUrl(badge.code.startsWith('seller') ? 'badge-sales' : 'badge')
-                  }
+                  iconUrl={badge.iconUrl ?? publicBadgeIcon(badge.code)}
                 />
               ))}
-            </div>
-          </section>
-        ) : null}
-
-        <div className="public-poster__actions">
-          <a href="/">Создать свои итоги</a>
-          <button type="button" onClick={() => void share()} disabled={shareState.status === 'loading'}>
-            {shareState.status === 'loading' ? 'Подготавливаем ссылку…' : 'Поделиться карточкой'}
-          </button>
-          <p role="status">{shareState.status === 'success' ? shareState.message : '\u00a0'}</p>
-        </div>
+            </section>
+          ) : (
+            <p className={styles.noBadges}>Весь год — уже достижение</p>
+          )}
+        </aside>
       </section>
-
     </main>
   );
 }

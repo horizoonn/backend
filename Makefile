@@ -6,7 +6,7 @@ BACKEND_GO_MOD := $(BACKEND_DIR)/go.mod
 BIN_DIR := $(CURDIR)/bin
 APP_BIN := $(BIN_DIR)/recap
 SEED_YEAR ?= 2026
-SEED_VALUE ?= 20250807
+SEED_VALUE ?= 20260807
 
 GOLANGCI_LINT_VERSION := v2.12.2
 GOLANGCI_LINT := $(BIN_DIR)/golangci-lint
@@ -31,7 +31,7 @@ POSTGRES_DSN = host=$${POSTGRES_BIND_HOST:-127.0.0.1} \
 	sslmode=$${POSTGRES_SSL_MODE:-disable}
 
 .PHONY: help tools require-backend require-env lint-config format lint vet test test-race \
-	test-integration tidy tidy-check generate generate-api generate-mocks check up down logs \
+	test-integration test-e2e tidy tidy-check generate generate-api generate-mocks check up down logs \
 	build run db-up compose-config ps logs-recap migrate-up migrate-down migrate-status \
 	seed seed-reset seed-dry-run
 
@@ -44,6 +44,7 @@ help:
 	@echo "  make test          Run unit tests"
 	@echo "  make test-race     Run unit tests with the race detector"
 	@echo "  make test-integration Run integration tests when present"
+	@echo "  make test-e2e      Run the backend HTTP journey against PostgreSQL"
 	@echo "  make tidy          Synchronize Go dependencies"
 	@echo "  make tidy-check    Check whether go.mod and go.sum are tidy"
 	@echo "  make generate      Generate code from project contracts"
@@ -136,6 +137,16 @@ test-integration: require-backend
 	fi; \
 	cd $(BACKEND_DIR) && go test -race -count=1 -timeout=5m -tags=integration ./tests/integration/...
 
+test-e2e: require-backend
+	@set -euo pipefail; \
+	tests="$$(find $(BACKEND_DIR) -type f -name '*_test.go' \
+		-exec grep -l '^//go:build e2e' {} + 2>/dev/null || true)"; \
+	if [ -z "$$tests" ]; then \
+		echo "No e2e tests found; skipping."; \
+		exit 0; \
+	fi; \
+	cd $(BACKEND_DIR) && go test -race -count=1 -timeout=5m -tags=e2e ./tests/e2e/...
+
 tidy: require-backend
 	cd $(BACKEND_DIR) && go mod tidy
 
@@ -151,7 +162,7 @@ generate-mocks: generate-api $(MOCKERY)
 	cd $(BACKEND_DIR) && $(MOCKERY) --config .mockery.yml
 
 check: generate
-	$(MAKE) lint-config lint vet tidy-check test-race test-integration
+	$(MAKE) lint-config lint vet tidy-check test-race test-integration test-e2e
 
 build: generate-api
 	mkdir -p $(BIN_DIR)

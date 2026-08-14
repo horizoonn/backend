@@ -1,0 +1,8 @@
+recap50.ru {
+	encode zstd gzip
+	reverse_proxy frontend:80
+}
+
+www.recap50.ru {
+	redir https://recap50.ru{uri} permanent
+}
